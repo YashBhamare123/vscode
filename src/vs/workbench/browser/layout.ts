@@ -2168,6 +2168,12 @@ export abstract class Layout extends Disposable implements IWorkbenchLayoutServi
 
 	private inMaximizedAuxiliaryBarTransition = false;
 
+	/**
+	 * True when the active editor had text focus at the moment the panel was maximized.
+	 * Hiding the editor part sets `display: none`, which blurs the textarea and drops the caret.
+	 */
+	private editorHadTextFocusBeforePanelMaximize = false;
+
 	isAuxiliaryBarMaximized(): boolean {
 		return this.stateModel.getRuntimeValue(LayoutStateKeys.AUXILIARYBAR_WAS_LAST_MAXIMIZED);
 	}
@@ -2255,6 +2261,10 @@ export abstract class Layout extends Disposable implements IWorkbenchLayoutServi
 		const panelPosition = this.getPanelPosition();
 		const maximize = !this.isPanelMaximized();
 		if (maximize) {
+			// Capture this before the editor is hidden. The maximize button does not take
+			// focus (mousedown is cancelled), so the editor can still be the active element.
+			this.editorHadTextFocusBeforePanelMaximize = !!this.mainPartEditorService.activeTextEditorControl?.hasTextFocus();
+
 			if (this.isVisible(Parts.PANEL_PART)) {
 				if (isHorizontal(panelPosition)) {
 					this.stateModel.setRuntimeValue(LayoutStateKeys.PANEL_LAST_NON_MAXIMIZED_HEIGHT, size.height);
@@ -2271,9 +2281,30 @@ export abstract class Layout extends Disposable implements IWorkbenchLayoutServi
 				width: isHorizontal(panelPosition) ? size.width : this.stateModel.getRuntimeValue(LayoutStateKeys.PANEL_LAST_NON_MAXIMIZED_WIDTH),
 				height: isHorizontal(panelPosition) ? this.stateModel.getRuntimeValue(LayoutStateKeys.PANEL_LAST_NON_MAXIMIZED_HEIGHT) : size.height
 			});
+
+			this.restoreEditorTextFocusAfterPanelRestore();
 		}
 
 		this.stateModel.setRuntimeValue(LayoutStateKeys.PANEL_WAS_LAST_MAXIMIZED, maximize);
+	}
+
+	/**
+	 * Put the caret back when maximizing the panel blurred the editor and the user
+	 * did not move focus into the terminal (or anywhere else) while it was maximized.
+	 */
+	private restoreEditorTextFocusAfterPanelRestore(): void {
+		const editorHadTextFocus = this.editorHadTextFocusBeforePanelMaximize;
+		this.editorHadTextFocusBeforePanelMaximize = false;
+		if (!editorHadTextFocus) {
+			return;
+		}
+
+		const activeElement = getActiveElement();
+		const activeDocument = activeElement?.ownerDocument ?? mainWindow.document;
+		const focusWasDropped = !activeElement || activeElement === activeDocument.body || activeElement === activeDocument.documentElement;
+		if (focusWasDropped && activeDocument === mainWindow.document) {
+			this.focusPart(Parts.EDITOR_PART);
+		}
 	}
 
 	private panelOpensMaximized(): boolean {
